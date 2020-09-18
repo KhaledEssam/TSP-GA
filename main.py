@@ -14,6 +14,7 @@ from faker import Faker
 fake = Faker()
 
 R = 6371e3
+EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,6 @@ class Config(object):
 
 
 def almost_equal(n1: float, n2: float) -> bool:
-    EPSILON = 1e-6
     return abs(n1 - n2) < EPSILON
 
 
@@ -243,7 +243,7 @@ def random_cities(config: Config) -> Optional[List[City]]:
 def construct_pydeck_layer(route: Route) -> pdk.Deck:
     def hex_to_rgb(h: str) -> Tuple[int, ...]:
         h = h.lstrip("#")
-        return tuple(int(h[i: i + 2], 16) for i in (0, 2, 4))
+        return tuple(int(h[j: j + 2], 16) for j in (0, 2, 4))
 
     records: List[Dict] = []
     for i, start in enumerate(route.route):
@@ -253,7 +253,7 @@ def construct_pydeck_layer(route: Route) -> pdk.Deck:
             "color": hex_to_rgb(fake.color(hue='orange', color_format='hex', luminosity="dark")),
             "path": [[start.longitude, start.latitude], [end.longitude, end.latitude]]
         }
-        records.append((record))
+        records.append(record)
     df = pd.DataFrame.from_records(records)
     view_state = pdk.data_utils.compute_view([[i.longitude, i.latitude] for i in route.route])
 
