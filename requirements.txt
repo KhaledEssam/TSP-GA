@@ -4,3 +4,4 @@ pandas
 Faker
 pydeck
 dataclasses
+pytest
