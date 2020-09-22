@@ -11,6 +11,20 @@ import pydeck as pdk
 import streamlit as st
 from faker import Faker
 
+st.beta_set_page_config("TSP - GA", "https://twemoji.maxcdn.com/2/svg/1f9e0.svg")
+
+hide_streamlit_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+.sidebar-close {visibility: hidden;}
+</style>
+
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+st.sidebar.header("Parameters")
+
 fake = Faker()
 
 R = 6371e3
@@ -23,7 +37,7 @@ class Config(object):
     population_size: int = 100
     elite_size: int = 20
     mutation_rate: float = 0.01
-    num_generations: int = 120
+    num_generations: int = 150
     country: str = "US"
     max_trials: int = 1_000
 
@@ -33,16 +47,24 @@ def almost_equal(n1: float, n2: float) -> bool:
 
 
 @dataclass(frozen=True)
-class City(object):
-    index: int
+class Coordinates(object):
     latitude: float
     longitude: float
+
+    def __eq__(self, other):
+        return almost_equal(self.latitude, other.latitude) and almost_equal(self.longitude, other.longitude)
+
+
+@dataclass(frozen=True)
+class City(object):
+    index: int
+    coordinates: Coordinates
     name: str
     country: str
     timezone: str
 
     def __eq__(self, other):
-        return almost_equal(self.latitude, other.latitude) and almost_equal(self.longitude, other.longitude)
+        return self.coordinates == other.coordinates
 
 
 @dataclass(frozen=True)
@@ -55,7 +77,7 @@ class Route(object):
         for i in range(len(self.route)):
             from_city = self.route[i]
             to_city = self.route[i + 1] if i + 1 < len(self.route) else self.route[0]
-            d += distance(from_city, to_city)
+            d += distance(from_city.coordinates, to_city.coordinates)
         return d
 
     @property
@@ -73,8 +95,8 @@ class Route(object):
 
 
 @lru_cache(maxsize=2048)
-def distance(a: City, b: City) -> float:
-    """Returns the distance between 2 points in Kilometers"""
+def distance(a: Coordinates, b: Coordinates) -> float:
+    """Returns the (haversine) distance between 2 points in Kilometers"""
     phi1 = a.latitude * math.pi / 180
     phi2 = b.latitude * math.pi / 180
     delta_phi = (b.latitude - a.latitude) * math.pi / 180
@@ -195,7 +217,8 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     initial_route = rank_routes(population)[0].route
     initial_route_distance = initial_route.route_distance
     initial_route_fitness = initial_route.route_fitness
-    st.info(f"Initial Distance: {initial_route_distance}\nInitial Fitness: {initial_route_fitness}")
+    st.info(f"Initial Distance: {initial_route_distance:.4f} Km")
+    st.info(f"\nInitial Fitness: {initial_route_fitness}")
 
     progress = st.progress(0)
     fitnesses: List[float] = []
@@ -213,17 +236,29 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     best_route = rank_routes(population)[0].route
     best_route_distance = best_route.route_distance
     best_route_fitness = best_route.route_fitness
-    st.success(f"Final Distance: {best_route_distance}\nFinal Fitness: {best_route_fitness}")
+    st.success(f"Final Distance: {best_route_distance:.4f} Km")
+    st.success(f"\nFinal Fitness: {best_route_fitness}")
     return best_route, History(fitnesses, distances)
 
 
+M: Dict[str, str] = {
+    "name": "Name",
+    "country": "Country",
+    "timezone": "Timezone",
+    "coordinates.latitude": "Latitude",
+    "coordinates.longitude": "Longitude"
+}
+
+
 def cities_df(city_list: List[City]) -> pd.DataFrame:
-    return pd.DataFrame.from_records(list(map(asdict, city_list)), index="index")
+    df_normalized = pd.json_normalize(list(map(asdict, city_list))).set_index("index")
+    df_normalized.rename(columns=M, inplace=True)
+    return df_normalized
 
 
 def random_city(i: int, country: str) -> City:
     lat, lon, city, country, tz = fake.local_latlng(country)
-    return City(i, float(lat), float(lon), city, country, tz)
+    return City(i, Coordinates(float(lat), float(lon)), city, country, tz)
 
 
 def random_cities(config: Config) -> Optional[List[City]]:
@@ -250,12 +285,13 @@ def construct_pydeck_layer(route: Route) -> pdk.Deck:
         end = route.route[i + 1] if i + 1 < len(route) else route.route[0]
         record = {
             "name": f"From {i} To {(i + 1) % len(route)}",
-            "color": hex_to_rgb(fake.color(hue='orange', color_format='hex', luminosity="dark")),
-            "path": [[start.longitude, start.latitude], [end.longitude, end.latitude]]
+            "color": hex_to_rgb(fake.color(hue='red', color_format='hex', luminosity="light")),
+            "path": [[start.coordinates.longitude, start.coordinates.latitude],
+                     [end.coordinates.longitude, end.coordinates.latitude]]
         }
         records.append(record)
     df = pd.DataFrame.from_records(records)
-    view_state = pdk.data_utils.compute_view([[i.longitude, i.latitude] for i in route.route])
+    view_state = pdk.data_utils.compute_view([[i.coordinates.longitude, i.coordinates.latitude] for i in route.route])
 
     layer = pdk.Layer(
         type="PathLayer",
