@@ -11,7 +11,7 @@ import pydeck as pdk
 import streamlit as st
 from faker import Faker
 
-st.beta_set_page_config("TSP - GA", "https://twemoji.maxcdn.com/2/svg/1f9e0.svg")
+st.beta_set_page_config("TSP - GA", "https://www.flaticon.com/svg/static/icons/svg/252/252025.svg")
 
 hide_streamlit_style = """
 <style>
@@ -309,11 +309,23 @@ def construct_pydeck_layer(route: Route) -> pdk.Deck:
 
 def main():
     st.title("Genetic Algorithm for TSP")
+    st.markdown(
+        """
+        Use a genetic algorithm to find an optimal solution for the traveling salesman problem.
+        
+        What we are optimizing for is the total
+        [haversine distance](https://www.movable-type.co.uk/scripts/latlong.html) traveled by the salesman.
+        
+        Play with the parameters on the sidebar to see their effect on the optimization process and the result.
+        """
+    )
+
+    main_run_btn = st.button("Run", key="main_run")
 
     default_config = Config()
 
     num_cities = st.sidebar.number_input("Number of Cities", 2, 100, default_config.num_cities, 1)
-    population_size = st.sidebar.number_input("Population Size", 1, 200, default_config.population_size, 1)
+    population_size = st.sidebar.number_input("Population Size", 5, 10_000, default_config.population_size, 5)
     elite_size = st.sidebar.number_input("Elite Size", 1, population_size, default_config.elite_size, 1)
     mutation_rate = st.sidebar.number_input("Mutation Rate", 0.0, 1.0, default_config.mutation_rate, 0.01)
     generations = st.sidebar.number_input("Number of Generations", 1, 20_000, default_config.num_generations, 50)
@@ -327,7 +339,9 @@ def main():
     valid_country_codes: List[str] = [i for i in country_codes if include_country_code(i)]
     country = st.sidebar.selectbox("Country", valid_country_codes, valid_country_codes.index(default_config.country))
 
-    if st.sidebar.button("Run"):
+    side_run_btn = st.sidebar.button("Run", key="side_run")
+
+    if main_run_btn or side_run_btn:
         config = Config(num_cities=num_cities, population_size=population_size, elite_size=elite_size,
                         mutation_rate=mutation_rate, num_generations=generations, country=country)
         city_list: Optional[List[City]] = random_cities(config)
