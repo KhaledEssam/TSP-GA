@@ -179,7 +179,9 @@ def breed_population(population_mating_pool: List[Route], elite_size: int) -> Li
         children.append(population_mating_pool[i])
 
     for i in range(length):
-        child = breed(pool[i], pool[len(population_mating_pool) - i - 1])
+        p1 = pool[i]
+        p2 = random.choice(pool)
+        child = breed(p1, p2)
         children.append(child)
     return children
 
@@ -217,7 +219,7 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     initial_route_distance = initial_route.route_distance
     initial_route_fitness = initial_route.route_fitness
     st.info(f"Initial Distance: {initial_route_distance:.4f} Km")
-    st.info(f"\nInitial Fitness: {initial_route_fitness}")
+    st.info(f"Initial Fitness: {initial_route_fitness}")
 
     progress = st.progress(0)
     fitnesses: List[float] = []
@@ -236,7 +238,7 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     best_route_distance = best_route.route_distance
     best_route_fitness = best_route.route_fitness
     st.success(f"Final Distance: {best_route_distance:.4f} Km")
-    st.success(f"\nFinal Fitness: {best_route_fitness}")
+    st.success(f"Final Fitness: {best_route_fitness}")
     return best_route, History(fitnesses, distances)
 
 
