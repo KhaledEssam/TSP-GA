@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from functools import lru_cache
 from typing import List, Tuple, NamedTuple, Dict, Optional
 
+import country_converter as coco
 import faker
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ class Config(object):
     elite_size: int = 20
     mutation_rate: float = 0.01
     num_generations: int = 150
-    country: str = "US"
+    country: str = "United States"
     max_trials: int = 1_000
 
 
@@ -338,8 +339,11 @@ def main():
         return len([i for i in land_coord if i[3] == code]) >= num_cities
 
     country_codes: List[str] = faker.providers.address.Provider.alpha_2_country_codes
-    valid_country_codes: List[str] = [i for i in country_codes if include_country_code(i)]
-    country = st.sidebar.selectbox("Country", valid_country_codes, valid_country_codes.index(default_config.country))
+    valid_country_codes: List[str] = sorted(
+        coco.convert([i for i in country_codes if include_country_code(i)], to="name"))
+    country = coco.convert(
+        st.sidebar.selectbox("Country", valid_country_codes, valid_country_codes.index(default_config.country)),
+        to="ISO2")
 
     side_run_btn = st.sidebar.button("Run", key="side_run")
 

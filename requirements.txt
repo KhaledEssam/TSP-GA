@@ -5,3 +5,4 @@ Faker
 pydeck
 dataclasses
 pytest
+country_converter
