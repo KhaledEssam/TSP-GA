@@ -2,6 +2,7 @@ import math
 import random
 from dataclasses import dataclass, asdict
 from functools import lru_cache
+from time import time
 from typing import List, Tuple, NamedTuple, Dict, Optional
 
 import country_converter as coco
@@ -11,6 +12,8 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from faker import Faker
+from pyrsistent import freeze, discard
+from pyrsistent.typing import PVector
 
 st.beta_set_page_config("TSP - GA", "https://www.flaticon.com/svg/static/icons/svg/252/252025.svg")
 
@@ -46,6 +49,10 @@ def almost_equal(n1: float, n2: float) -> bool:
     return abs(n1 - n2) < EPSILON
 
 
+def swap(l: PVector, i1: int, i2: int) -> PVector:
+    return l.mset(i1, l[i2], i2, l[i1])
+
+
 @dataclass(frozen=True)
 class Coordinates(object):
     latitude: float
@@ -69,7 +76,7 @@ class City(object):
 
 @dataclass(frozen=True)
 class Route(object):
-    route: List[City]
+    route: PVector[City]
 
     @property
     def route_distance(self) -> float:
@@ -90,9 +97,6 @@ class Route(object):
     def __getitem__(self, item):
         return self.route[item]
 
-    def __setitem__(self, key, value):
-        self.route[key] = value
-
 
 @lru_cache(maxsize=2048)
 def distance(a: Coordinates, b: Coordinates) -> float:
@@ -110,13 +114,13 @@ def distance(a: Coordinates, b: Coordinates) -> float:
     return R * c / 1_000
 
 
-def random_route(city_list: List[City]) -> Route:
-    route: Route = Route(random.sample(city_list, len(city_list)))
+def random_route(city_list: PVector[City]) -> Route:
+    route: Route = Route(freeze(random.sample(city_list, len(city_list))))
     return route
 
 
-def random_population(city_list: List[City], population_size: int) -> List[Route]:
-    return [random_route(city_list) for _ in range(population_size)]
+def random_population(city_list: PVector[City], population_size: int) -> PVector[Route]:
+    return freeze([random_route(city_list) for _ in range(population_size)])
 
 
 class RankedRoute(NamedTuple):
@@ -124,13 +128,14 @@ class RankedRoute(NamedTuple):
     route: Route
 
 
-def rank_routes(population: List[Route]) -> List[RankedRoute]:
-    index_paired: List[RankedRoute] = [RankedRoute(i, route) for i, route in enumerate(population)]
-    index_paired_sorted: List[RankedRoute] = sorted(index_paired, key=lambda x: x.route.route_fitness, reverse=True)
+def rank_routes(population: PVector[Route]) -> PVector[RankedRoute]:
+    index_paired: PVector[RankedRoute] = freeze([RankedRoute(i, route) for i, route in enumerate(population)])
+    index_paired_sorted: PVector[RankedRoute] = freeze(
+        sorted(index_paired, key=lambda x: x.route.route_fitness, reverse=True))
     return index_paired_sorted
 
 
-def selection(population_ranked: List[RankedRoute], elite_size: int) -> List[int]:
+def selection(population_ranked: PVector[RankedRoute], elite_size: int) -> List[int]:
     selection_result: List[int] = []
     cumsum: np.ndarray = np.array([i.route.route_fitness for i in population_ranked]).cumsum()
     total_sum: float = np.array([i.route.route_fitness for i in population_ranked]).sum()
@@ -149,57 +154,41 @@ def selection(population_ranked: List[RankedRoute], elite_size: int) -> List[int
     return selection_result
 
 
-def mating_pool(population: List[Route], selection_result: List[int]) -> List[Route]:
-    return [population[index] for index in selection_result]
+def mating_pool(population: PVector[Route], selection_result: List[int]) -> PVector[Route]:
+    return freeze([population[index] for index in selection_result])
 
 
 def breed(p1: Route, p2: Route) -> Route:
-    child_p1: List[City] = []
-
     gene_a = int(random.random() * len(p1))
     gene_b = int(random.random() * len(p2))
-
     start_gene = min(gene_a, gene_b)
     end_gene = max(gene_a, gene_b)
-
-    for i in range(start_gene, end_gene):
-        child_p1.append(p1[i])
-
-    child_p2: List[City] = [item for item in p2.route if item not in child_p1]
-    child: List[City] = child_p1 + child_p2
+    c1 = p1.route[start_gene:end_gene]
+    child = c1 + p2.route.transform([lambda ix, v: v in c1], discard)
     return Route(child)
 
 
-def breed_population(population_mating_pool: List[Route], elite_size: int) -> List[Route]:
-    children: List[Route] = []
+def breed_population(population_mating_pool: PVector[Route], elite_size: int) -> PVector[Route]:
     length = len(population_mating_pool) - elite_size
-
     pool = random.sample(population_mating_pool, len(population_mating_pool))
-
-    for i in range(elite_size):
-        children.append(population_mating_pool[i])
-
-    for i in range(length):
-        p1 = pool[i]
-        p2 = random.choice(pool)
-        child = breed(p1, p2)
-        children.append(child)
-    return children
+    return population_mating_pool[:elite_size] + freeze(
+        [breed(pool[i], random.choice(pool)) for i in range(length)])
 
 
-def mutate(individual: Route, mutation_rate: float):
-    for swapped in range(len(individual)):
+def mutate(individual: Route, mutation_rate: float) -> Route:
+    route = individual.route
+    for i in range(len(individual)):
         if random.random() < mutation_rate:
             swap_with = int(random.random() * len(individual))
-            individual[swapped], individual[swap_with] = individual[swap_with], individual[swapped]
-    return individual
+            route = swap(route, i, swap_with)
+    return Route(route)
 
 
-def mutate_population(population: List[Route], mutation_rate: float) -> List[Route]:
-    return [mutate(i, mutation_rate) for i in population]
+def mutate_population(population: PVector[Route], mutation_rate: float) -> PVector[Route]:
+    return freeze([mutate(i, mutation_rate) for i in population])
 
 
-def next_generation(current_gen: List[Route], elite_size: int, mutation_rate: float) -> List[Route]:
+def next_generation(current_gen: PVector[Route], elite_size: int, mutation_rate: float) -> PVector[Route]:
     population_ranked = rank_routes(current_gen)
     selection_result = selection(population_ranked, elite_size)
     pool = mating_pool(current_gen, selection_result)
@@ -215,7 +204,7 @@ class History(object):
 
 
 def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, History]:
-    population = random_population(city_list, config.population_size)
+    population = random_population(freeze(city_list), config.population_size)
     initial_route = rank_routes(population)[0].route
     initial_route_distance = initial_route.route_distance
     initial_route_fitness = initial_route.route_fitness
@@ -226,6 +215,7 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     fitnesses: List[float] = []
     distances: List[float] = []
 
+    start_time = time()
     for i in range(config.num_generations):
         progress.progress((i + 1) / config.num_generations)
 
@@ -234,12 +224,14 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
         distances.append(best_route_so_far.route_distance)
 
         population = next_generation(population, config.elite_size, config.mutation_rate)
+    end_time = time()
 
     best_route = rank_routes(population)[0].route
     best_route_distance = best_route.route_distance
     best_route_fitness = best_route.route_fitness
     st.success(f"Final Distance: {best_route_distance:.4f} Km")
     st.success(f"Final Fitness: {best_route_fitness}")
+    st.info(f"Optimization took: {end_time - start_time:.2f} seconds")
     return best_route, History(fitnesses, distances)
 
 

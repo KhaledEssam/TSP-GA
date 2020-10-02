@@ -6,3 +6,4 @@ pydeck
 dataclasses
 pytest
 country_converter
+pyrsistent
