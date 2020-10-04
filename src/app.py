@@ -1,6 +1,7 @@
 import math
 import random
 from dataclasses import dataclass, asdict
+from functools import cached_property
 from functools import lru_cache
 from time import time
 from typing import List, Tuple, NamedTuple, Dict, Optional
@@ -12,7 +13,6 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from faker import Faker
-from pyrsistent import freeze, discard
 from pyrsistent.typing import PVector
 
 st.beta_set_page_config("TSP - GA", "https://www.flaticon.com/svg/static/icons/svg/252/252025.svg")
@@ -53,6 +53,13 @@ def swap(l: PVector, i1: int, i2: int) -> PVector:
     return l.mset(i1, l[i2], i2, l[i1])
 
 
+def swap_list(l: List, i1: int, i2: int) -> List:
+    if i1 == i2: return l
+    ms = min(i1, i2)
+    mx = max(i1, i2)
+    return l[:ms] + [l[mx]] + l[ms + 1: mx] + [l[ms]] + l[mx + 1:]
+
+
 @dataclass(frozen=True)
 class Coordinates(object):
     latitude: float
@@ -76,18 +83,18 @@ class City(object):
 
 @dataclass(frozen=True)
 class Route(object):
-    route: PVector[City]
+    route: List[City]
 
-    @property
+    @cached_property
     def route_distance(self) -> float:
         d: float = 0
         for i in range(len(self.route)):
             from_city = self.route[i]
-            to_city = self.route[i + 1] if i + 1 < len(self.route) else self.route[0]
+            to_city = self.route[(i + 1) % len(self.route)]
             d += distance(from_city.coordinates, to_city.coordinates)
         return d
 
-    @property
+    @cached_property
     def route_fitness(self) -> float:
         return 1 / self.route_distance
 
@@ -99,12 +106,12 @@ class Route(object):
 
 
 @lru_cache(maxsize=2048)
-def distance(a: Coordinates, b: Coordinates) -> float:
+def distance(c1: Coordinates, c2: Coordinates) -> float:
     """Returns the (haversine) distance between 2 points in Kilometers"""
-    phi1 = a.latitude * math.pi / 180
-    phi2 = b.latitude * math.pi / 180
-    delta_phi = (b.latitude - a.latitude) * math.pi / 180
-    delta_lambda = (b.longitude - a.longitude) * math.pi / 180
+    phi1 = c1.latitude * math.pi / 180
+    phi2 = c2.latitude * math.pi / 180
+    delta_phi = (c2.latitude - c1.latitude) * math.pi / 180
+    delta_lambda = (c2.longitude - c1.longitude) * math.pi / 180
 
     a = math.sin(delta_phi / 2) * math.sin(delta_phi / 2) + math.cos(phi1) * math.cos(
         phi2
@@ -114,13 +121,17 @@ def distance(a: Coordinates, b: Coordinates) -> float:
     return R * c / 1_000
 
 
-def random_route(city_list: PVector[City]) -> Route:
-    route: Route = Route(freeze(random.sample(city_list, len(city_list))))
-    return route
+@lru_cache(maxsize=2048)
+def city_distance(c1: City, c2: City) -> float:
+    return distance(c1.coordinates, c2.coordinates)
 
 
-def random_population(city_list: PVector[City], population_size: int) -> PVector[Route]:
-    return freeze([random_route(city_list) for _ in range(population_size)])
+def random_route(city_list: List[City]) -> Route:
+    return Route(random.sample(city_list, len(city_list)))
+
+
+def random_population(city_list: List[City], population_size: int) -> List[Route]:
+    return [random_route(city_list) for _ in range(population_size)]
 
 
 class RankedRoute(NamedTuple):
@@ -128,24 +139,23 @@ class RankedRoute(NamedTuple):
     route: Route
 
 
-def rank_routes(population: PVector[Route]) -> PVector[RankedRoute]:
-    index_paired: PVector[RankedRoute] = freeze([RankedRoute(i, route) for i, route in enumerate(population)])
-    index_paired_sorted: PVector[RankedRoute] = freeze(
-        sorted(index_paired, key=lambda x: x.route.route_fitness, reverse=True))
-    return index_paired_sorted
+def rank_routes(population: List[Route]) -> List[RankedRoute]:
+    index_paired: List[RankedRoute] = [RankedRoute(i, route) for i, route in enumerate(population)]
+    return sorted(index_paired, key=lambda x: x.route.route_fitness, reverse=True)
 
 
-def selection(population_ranked: PVector[RankedRoute], elite_size: int) -> List[int]:
+def selection(population_ranked: List[RankedRoute], elite_size: int) -> List[int]:
     selection_result: List[int] = []
-    cumsum: np.ndarray = np.array([i.route.route_fitness for i in population_ranked]).cumsum()
-    total_sum: float = np.array([i.route.route_fitness for i in population_ranked]).sum()
-    cum_percentage: np.ndarray = 100 * cumsum / total_sum
+    fitnesses = np.asarray([i.route.route_fitness for i in population_ranked])
+    cumsum: np.ndarray = fitnesses.cumsum()
+    total_sum: float = fitnesses.sum()
+    cum_percentage: np.ndarray = cumsum / total_sum
 
     for i in range(elite_size):
         selection_result.append(population_ranked[i].index)
 
     for _ in range(len(population_ranked) - elite_size):
-        pick = 100 * random.random()
+        pick = random.random()
         for i, ranked_route in enumerate(population_ranked):
             if cum_percentage[i] >= pick:
                 selection_result.append(ranked_route.index)
@@ -154,8 +164,8 @@ def selection(population_ranked: PVector[RankedRoute], elite_size: int) -> List[
     return selection_result
 
 
-def mating_pool(population: PVector[Route], selection_result: List[int]) -> PVector[Route]:
-    return freeze([population[index] for index in selection_result])
+def mating_pool(population: List[Route], selection_result: List[int]) -> List[Route]:
+    return [population[index] for index in selection_result]
 
 
 def breed(p1: Route, p2: Route) -> Route:
@@ -164,15 +174,14 @@ def breed(p1: Route, p2: Route) -> Route:
     start_gene = min(gene_a, gene_b)
     end_gene = max(gene_a, gene_b)
     c1 = p1.route[start_gene:end_gene]
-    child = c1 + p2.route.transform([lambda ix, v: v in c1], discard)
+    child = c1 + [i for i in p2.route if i not in c1]
     return Route(child)
 
 
-def breed_population(population_mating_pool: PVector[Route], elite_size: int) -> PVector[Route]:
+def breed_population(population_mating_pool: List[Route], elite_size: int) -> List[Route]:
     length = len(population_mating_pool) - elite_size
     pool = random.sample(population_mating_pool, len(population_mating_pool))
-    return population_mating_pool[:elite_size] + freeze(
-        [breed(pool[i], random.choice(pool)) for i in range(length)])
+    return population_mating_pool[:elite_size] + [breed(pool[i], random.choice(pool)) for i in range(length)]
 
 
 def mutate(individual: Route, mutation_rate: float) -> Route:
@@ -180,21 +189,21 @@ def mutate(individual: Route, mutation_rate: float) -> Route:
     for i in range(len(individual)):
         if random.random() < mutation_rate:
             swap_with = int(random.random() * len(individual))
-            route = swap(route, i, swap_with)
+            route[i], route[swap_with] = route[swap_with], route[i]
     return Route(route)
 
 
-def mutate_population(population: PVector[Route], mutation_rate: float) -> PVector[Route]:
-    return freeze([mutate(i, mutation_rate) for i in population])
+def mutate_population(population: List[Route], mutation_rate: float) -> List[Route]:
+    return [mutate(i, mutation_rate) for i in population]
 
 
-def next_generation(current_gen: PVector[Route], elite_size: int, mutation_rate: float) -> PVector[Route]:
+def next_generation(current_gen: List[Route], elite_size: int, mutation_rate: float) -> Tuple[List[Route], Route]:
     population_ranked = rank_routes(current_gen)
     selection_result = selection(population_ranked, elite_size)
     pool = mating_pool(current_gen, selection_result)
     children = breed_population(pool, elite_size)
     next_gen = mutate_population(children, mutation_rate)
-    return next_gen
+    return next_gen, population_ranked[0].route
 
 
 @dataclass(frozen=True)
@@ -204,7 +213,7 @@ class History(object):
 
 
 def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, History]:
-    population = random_population(freeze(city_list), config.population_size)
+    population = random_population(city_list, config.population_size)
     initial_route = rank_routes(population)[0].route
     initial_route_distance = initial_route.route_distance
     initial_route_fitness = initial_route.route_fitness
@@ -218,12 +227,9 @@ def genetic_algorithm(city_list: List[City], config: Config) -> Tuple[Route, His
     start_time = time()
     for i in range(config.num_generations):
         progress.progress((i + 1) / config.num_generations)
-
-        best_route_so_far = rank_routes(population)[0].route
+        population, best_route_so_far = next_generation(population, config.elite_size, config.mutation_rate)
         fitnesses.append(best_route_so_far.route_fitness)
         distances.append(best_route_so_far.route_distance)
-
-        population = next_generation(population, config.elite_size, config.mutation_rate)
     end_time = time()
 
     best_route = rank_routes(population)[0].route
