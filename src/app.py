@@ -15,7 +15,7 @@ import streamlit as st
 from faker import Faker
 from pyrsistent.typing import PVector
 
-st.beta_set_page_config("TSP - GA", "https://www.flaticon.com/svg/static/icons/svg/252/252025.svg")
+st.set_page_config("TSP - GA", "https://www.flaticon.com/svg/static/icons/svg/252/252025.svg")
 
 hide_streamlit_style = """
 <style>
